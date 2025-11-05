@@ -12,8 +12,10 @@ export default function App() {
   const [selectedShape, setSelectedShape] = useState(null); // currently only 'circle'
   const [selectedColor] = useState('#E8D2A6');
   const [selectedHeightInch, setSelectedHeightInch] = useState(null); // 3|6|8|9|12
+  const [selectedFillingColor, setSelectedFillingColor] = useState(null);
+  const [selectedToppings, setSelectedToppings] = useState([]); // ['Sprinkles','Peanuts','Cream']
   const animationRef = useRef(null);
-  const threeRef = useRef({ renderer: null, scene: null, camera: null, mesh: null, sponge: null, icing: null, icingAnim: null });
+  const threeRef = useRef({ renderer: null, scene: null, camera: null, mesh: null, sponge: null, icing: null, icingAnim: null, fillingGroup: null, toppingsGroup: null });
   const [fontsLoaded] = useFonts({ Poppins_400Regular, Poppins_600SemiBold });
   const [cameraReady, setCameraReady] = useState(false);
   const rotationRef = useRef({ x: 0, y: 0 });
@@ -42,6 +44,89 @@ export default function App() {
     setSelectedShape(null);
     setStep(1);
     setSelectedHeightInch(null);
+  }, []);
+
+  // Step 5: create toppings attached to cake top
+  const applyToppings = useCallback((opts) => {
+    const state = threeRef.current;
+    const { mesh } = state;
+    if (!mesh) return;
+    if (state.toppingsGroup) {
+      mesh.remove(state.toppingsGroup);
+      state.toppingsGroup = null;
+    }
+    const group = new THREE.Group();
+    const topYLocal = 0.25 + 0.015;
+
+    const addSprinkles = (color) => {
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85 });
+      for (let i = 0; i < 70; i++) {
+        const r = Math.random() * 1.0;
+        const theta = Math.random() * Math.PI * 2;
+        const x = Math.cos(theta) * r;
+        const z = Math.sin(theta) * r;
+        const geom = new THREE.BoxGeometry(0.02, 0.08, 0.02);
+        const m = new THREE.Mesh(geom, mat);
+        m.position.set(x, topYLocal + 0.02, z);
+        m.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+        group.add(m);
+      }
+    };
+
+    const addNuts = (color) => {
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
+      for (let i = 0; i < 28; i++) {
+        const r = Math.random() * 0.9;
+        const theta = Math.random() * Math.PI * 2;
+        const x = Math.cos(theta) * r;
+        const z = Math.sin(theta) * r;
+        const s = 0.05 + Math.random() * 0.03;
+        const peanut = new THREE.SphereGeometry(s, 10, 10);
+        const m = new THREE.Mesh(peanut, mat);
+        m.position.set(x, topYLocal + 0.01, z);
+        group.add(m);
+      }
+    };
+
+    const addCreamRing = (color) => {
+      const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.9 });
+      const dollops = 12;
+      const radiusLocal = 0.95;
+      for (let i = 0; i < dollops; i++) {
+        const angle = (i / dollops) * Math.PI * 2;
+        const x = Math.cos(angle) * radiusLocal;
+        const z = Math.sin(angle) * radiusLocal;
+        const s = 0.1;
+        const geo = new THREE.SphereGeometry(s, 12, 12);
+        const m = new THREE.Mesh(geo, mat);
+        m.position.set(x, topYLocal + 0.05, z);
+        group.add(m);
+      }
+    };
+
+    // Map 15 toppings to simple generators
+    const gens = {
+      'Sprinkles': () => addSprinkles('#FF69B4'),
+      'Rainbow Sprinkles': () => { ['#EF4444','#F59E0B','#10B981','#3B82F6','#A855F7'].forEach(addSprinkles); },
+      'Peanuts': () => addNuts('#C4A484'),
+      'Almonds': () => addNuts('#E6C9A8'),
+      'Choco Chips': () => addNuts('#5B3A29'),
+      'Cream': () => addCreamRing('#FFFFFF'),
+      'Whipped Cream': () => addCreamRing('#F8FAFC'),
+      'Berries': () => { addNuts('#DC2626'); addNuts('#7C3AED'); },
+      'Cherry': () => addNuts('#FF1F1F'),
+      'Gummy': () => addSprinkles('#22D3EE'),
+      'Caramel Bits': () => addNuts('#B45309'),
+      'Sugar Pearls': () => addNuts('#E5E7EB'),
+      'Gold Leaf': () => addNuts('#D4AF37'),
+      'Cookie Crumbs': () => addSprinkles('#6B7280'),
+      'Oreo': () => addSprinkles('#111827')
+    };
+
+    opts.forEach(o => { if (gens[o]) gens[o](); });
+
+    mesh.add(group);
+    state.toppingsGroup = group;
   }, []);
 
   // Fallback: if cameraReady never fires on some devices, enable after short delay
@@ -99,7 +184,7 @@ export default function App() {
       scene.add(mesh);
     }
 
-    threeRef.current = { renderer, scene, camera, mesh, sponge, icing: null, icingAnim: null };
+    threeRef.current = { renderer, scene, camera, mesh, sponge, icing: null, icingAnim: null, fillingGroup: null, toppingsGroup: null };
 
     const renderLoop = () => {
       const { renderer: r, scene: s, camera: c, mesh: m } = threeRef.current;
@@ -108,30 +193,7 @@ export default function App() {
         m.rotation.y = rotationRef.current.y;
         m.rotation.x = rotationRef.current.x;
       }
-      // icing animation
-      const state = threeRef.current.icingAnim;
-      const icing = threeRef.current.icing;
-      if (state && icing && m) {
-        state.t += 0.02; // progress
-        // drop from top
-        icing.position.y = THREE.MathUtils.lerp(2.0, 0.3, Math.min(1, state.t));
-        // spread over the cake: increase radius and flatten height
-        const spread = Math.min(1, Math.max(0, state.t - 0.4) / 0.6);
-        const baseScale = 0.35;
-        const heightScale = selectedHeightInch ? (selectedHeightInch / 6) : 1;
-        icing.scale.set(baseScale * (0.2 + spread * 1.1), baseScale * 0.1, baseScale * (0.2 + spread * 1.1));
-        // gradually tint cake color
-        const target = new THREE.Color(state.colorHex);
-        const current = m.material.color.clone();
-        current.lerp(target, 0.08);
-        m.material.color.copy(current);
-        if (state.t >= 1.2) {
-          // end animation
-          s.remove(icing);
-          threeRef.current.icing = null;
-          threeRef.current.icingAnim = null;
-        }
-      }
+      // animation disabled for stability in Expo Go
       r.render(s, c);
       gl.endFrameEXP();
       animationRef.current = requestAnimationFrame(renderLoop);
@@ -150,11 +212,18 @@ export default function App() {
     const newMesh = createCakeMesh(selectedShape, sponge, selectedColor);
     scene.add(newMesh);
     threeRef.current.mesh = newMesh;
-  }, [selectedShape, selectedColor, selectedHeightInch, createCakeMesh]);
+    if (selectedFillingColor) {
+      // Reattach filling to the new mesh
+      applyTopFilling(selectedFillingColor);
+    }
+    if (selectedToppings.length) {
+      applyToppings(selectedToppings);
+    }
+  }, [selectedShape, selectedColor, selectedHeightInch, selectedFillingColor, selectedToppings, createCakeMesh, applyTopFilling]);
 
   // Trigger color icing animation
   const startIcingAnimation = useCallback((hex) => {
-    // TEMP: Apply color instantly to avoid device-specific GL issues with overlays
+    // Apply instantly (animation disabled for device stability)
     const { mesh, scene, icing } = threeRef.current;
     if (icing && scene) {
       scene.remove(icing);
@@ -165,6 +234,53 @@ export default function App() {
       mesh.material.color = new THREE.Color(hex);
       mesh.material.needsUpdate = true;
     }
+  }, []);
+
+  // Step 4: create/replace top filling with simple drips
+  const applyTopFilling = useCallback((hex) => {
+    const state = threeRef.current;
+    const { mesh, fillingGroup } = state;
+    if (!mesh) return;
+    // Remove previous from the mesh
+    if (fillingGroup) {
+      mesh.remove(fillingGroup);
+      state.fillingGroup = null;
+    }
+
+    const group = new THREE.Group();
+    // Positions and sizes are in the cake's local units (pre-scale)
+    const topYLocal = 0.25 + 0.01; // cylinder half-height (0.5/2) + offset
+
+    // Top disc exactly the cake radius (radius ~ 1.1)
+    const discGeom = new THREE.CylinderGeometry(1.1, 1.1, 0.03, 64);
+    const mat = new THREE.MeshStandardMaterial({ color: hex, roughness: 0.85, metalness: 0.0 });
+    const disc = new THREE.Mesh(discGeom, mat);
+    disc.position.set(0, topYLocal, 0);
+    group.add(disc);
+
+    // Drips around the rim using local coordinates (rounded, tapered cylinders)
+    const dripMat = new THREE.MeshStandardMaterial({ color: hex, roughness: 0.9, metalness: 0.0 });
+    const dripCount = 14;
+    for (let i = 0; i < dripCount; i++) {
+      const angle = (i / dripCount) * Math.PI * 2 + (Math.random() * 0.2 - 0.1);
+      const lenLocal = 0.14 + Math.random() * 0.26; // 0.14–0.40 down the side
+      const rTop = 0.04 + Math.random() * 0.02;    // slightly wider at top
+      const rBottom = rTop * 0.6;                  // tapered toward bottom
+      const cyl = new THREE.CylinderGeometry(rTop, rBottom, lenLocal, 12);
+      const drip = new THREE.Mesh(cyl, dripMat);
+      const radiusLocal = 1.095; // at the exact rim, slightly inside disc
+      const x = Math.cos(angle) * radiusLocal;
+      const z = Math.sin(angle) * radiusLocal;
+      drip.position.set(x, topYLocal - lenLocal / 2, z);
+      // Orient so the drip normal points outward; rotate 90deg to align axis vertically already
+      drip.lookAt(0, topYLocal - lenLocal / 2, 0);
+      group.add(drip);
+    }
+
+    // Attach as a child so it follows rotation/scale with the cake
+    mesh.add(group);
+    state.fillingGroup = group;
+    setSelectedFillingColor(hex);
   }, []);
 
   useEffect(() => {
@@ -204,7 +320,7 @@ export default function App() {
       {/* Step panel: Step 1 choose base, Step 2 height */}
       <View style={styles.promptWrap}>
         <View style={styles.promptCard}>
-          <Text style={styles.stepLabel}>Step {step} of 3</Text>
+          <Text style={styles.stepLabel}>Step {step} of 5</Text>
           {step === 1 && (
             <>
               <Text style={styles.promptTitle}>Choose base</Text>
@@ -252,7 +368,60 @@ export default function App() {
                 ))}
               </View>
               <View style={styles.footerRow}>
-                <TouchableOpacity style={styles.nextBtn} onPress={() => setStep(2)}>
+                <TouchableOpacity style={styles.nextBtn} onPress={() => setStep(4)}>
+                  <Text style={styles.nextText}>Next</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {step === 4 && (
+            <>
+              <Text style={styles.promptTitle}>Top filling</Text>
+              <View style={styles.optionsRow}>
+                {['#7DD3FC','#FDA4AF','#FDE047','#86EFAC','#A78BFA','#FFFFFF'].map(c => (
+                  <TouchableOpacity key={c} onPress={() => applyTopFilling(c)}>
+                    <View style={[styles.colorSwatch, { backgroundColor: c, borderColor: selectedFillingColor===c ? '#9C27B0' : '#333' }]} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={styles.footerRow}>
+                <TouchableOpacity style={styles.nextBtn} onPress={() => setStep(5)}>
+                  <Text style={styles.nextText}>Next</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {step === 5 && (
+            <>
+              <Text style={styles.promptTitle}>Toppings</Text>
+              <View style={styles.optionsRow}>
+                {['Sprinkles','Rainbow Sprinkles','Peanuts','Almonds','Choco Chips','Cream','Whipped Cream','Berries','Cherry','Gummy','Caramel Bits','Sugar Pearls','Gold Leaf','Cookie Crumbs','Oreo'].map(t => {
+                  const active = selectedToppings.includes(t);
+                  return (
+                    <TouchableOpacity key={t} style={[styles.optionBtn, active && styles.optionActive]} onPress={() => {
+                      setSelectedToppings(prev => {
+                        let next = prev;
+                        if (active) {
+                          next = prev.filter(x=>x!==t);
+                        } else if (prev.length < 2) {
+                          next = [...prev, t];
+                        } else {
+                          // keep most recent one; replace the first
+                          next = [prev[1], t];
+                        }
+                        applyToppings(next);
+                        return next;
+                      });
+                    }}>
+                      <Text style={styles.optionText}>{t}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+              <View style={styles.footerRow}>
+                <TouchableOpacity style={styles.nextBtn} onPress={() => setStep(4)}>
                   <Text style={styles.nextText}>Back</Text>
                 </TouchableOpacity>
               </View>
